@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+.git
+.claude
+*.local
+*.log
+npm-debug.log*
+
+# Large design/reference assets not needed for the build
+figma_dialogs.json
+figma_reminder*.png
+figma_reminder*.json
+figma_campaign_texts.txt

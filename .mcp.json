@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "shadcn": {
+      "command": "npx",
+      "args": [
+        "shadcn@latest",
+        "mcp"
+      ]
+    },
+    "figma": {
+      "command": "figma-developer-mcp",
+      "args": [
+        "--figma-api-key=figd_EkKeWTkw9ia_pCVLxJ2ZPRtEikA3DvW4gvCpoaXm",
+        "--stdio"
+      ]
+    }
+  }
+}

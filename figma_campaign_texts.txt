@@ -1,0 +1,16 @@
+﻿Error 4839-23438: {"status":429,"err":"Rate limit exceeded"}
+
+Error 4839-24661: {"status":429,"err":"Rate limit exceeded"}
+
+Error 4840-24941: {"status":429,"err":"Rate limit exceeded"}
+
+Error 4840-25604: {"status":429,"err":"Rate limit exceeded"}
+
+Error 4840-27000: {"status":429,"err":"Rate limit exceeded"}
+
+Error 4840-27156: {"status":429,"err":"Rate limit exceeded"}
+
+Error 4925-54202: {"status":429,"err":"Rate limit exceeded"}
+
+Error 4928-54662: {"status":429,"err":"Rate limit exceeded"}
+
