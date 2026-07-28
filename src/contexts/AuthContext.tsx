@@ -18,8 +18,6 @@ export interface AuthUser {
 
 interface AuthState {
   user: AuthUser | null;
-  preAuthToken: string | null;
-  otpSentTo: string | null;
   isAuthenticated: boolean;
   /** Backend authorities the current role grants (JWT permissions claim). */
   rolePermissions: string[];
@@ -29,9 +27,12 @@ interface AuthState {
   permissionsReady: boolean;
   /** True once the backend has rejected a request because this user's workspace was suspended. */
   workspaceDeactivated: boolean;
+  /**
+   * Signs in against Active Directory (with a local-password fallback for
+   * accounts AD does not hold) and establishes the session in one step. There
+   * is no OTP: the platform is reachable only from the NIC LAN.
+   */
   login: (username: string, password: string) => Promise<void>;
-  verifyOtp: (otp: string) => Promise<void>;
-  resendOtp: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -111,8 +112,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return stored ? userFromToken(stored) : null;
   });
 
-  const [preAuthToken, setPreAuthToken] = React.useState<string | null>(null);
-  const [otpSentTo, setOtpSentTo] = React.useState<string | null>(null);
   const [rolePermissions, setRolePermissions] = React.useState<string[]>(() =>
     permissionsFromToken(sessionStorage.getItem(TOKEN_STORAGE_KEY)),
   );
@@ -126,7 +125,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
       clearAuthHeader();
       setUser(null);
-      setPreAuthToken(null);
       setRolePermissions([]);
       setWorkspaceDeactivated(false);
     }
@@ -202,38 +200,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user?.id, user?.workspaceId, user?.role]);
 
+  /**
+   * One round trip. The backend checks the credentials against Active
+   * Directory — falling back to a local password only for accounts AD does not
+   * hold — and returns the access token plus an HttpOnly refresh cookie. The
+   * OTP round trip that used to sit in the middle is gone.
+   */
   async function login(username: string, password: string) {
     const { data } = await api.post<{
-      preAuthToken: string;
-      otpSentTo?: string;
-      expiresIn?: number;
-    }>("/auth/login", {
-      username,
-      password,
-    });
-    setPreAuthToken(data.preAuthToken);
-    setOtpSentTo(data.otpSentTo ?? null);
-    setWorkspaceDeactivated(false);
-  }
-
-  async function verifyOtp(otp: string) {
-    if (!preAuthToken) throw new Error("No pre-auth token — call login() first");
-    const { data } = await api.post<{
       accessToken: string;
+      expiresIn?: number;
       user?: Partial<AuthUser>;
-    }>("/auth/verify-otp", { preAuthToken, otp });
+    }>("/auth/login", { username, password });
 
     sessionStorage.setItem(TOKEN_STORAGE_KEY, data.accessToken);
     const decoded = userFromToken(data.accessToken);
     // Merge any explicit user fields from the response body
     setUser(
-      decoded
-        ? { ...decoded, ...(data.user as Partial<AuthUser>) }
-        : null,
+      decoded ? { ...decoded, ...(data.user as Partial<AuthUser>) } : null,
     );
     setRolePermissions(permissionsFromToken(data.accessToken));
-    setPreAuthToken(null);
-    setOtpSentTo(null);
+    setWorkspaceDeactivated(false);
 
     // The JWT alone can't carry workspaceName/division, so without this the
     // sidebar shows "role only" for the rest of the session — the only other
@@ -248,11 +235,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  async function resendOtp() {
-    if (!preAuthToken) throw new Error("No pre-auth token");
-    await api.post("/auth/resend-otp", { preAuthToken });
-  }
-
   async function logout() {
     try {
       await api.post("/auth/logout");
@@ -262,8 +244,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
       clearAuthHeader();
       setUser(null);
-      setPreAuthToken(null);
-      setOtpSentTo(null);
       setRolePermissions([]);
       setWorkspaceDeactivated(false);
     }
@@ -271,16 +251,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value: AuthState = {
     user,
-    preAuthToken,
-    otpSentTo,
     isAuthenticated: !!user,
     rolePermissions,
     workspacePermissions,
     permissionsReady,
     workspaceDeactivated,
     login,
-    verifyOtp,
-    resendOtp,
     logout,
   };
 

@@ -14,13 +14,10 @@ const REFRESH_URL = `${API_BASE}/auth/refresh`;
 const EXPIRY_SKEW_MS = 10_000;
 
 // Endpoints that must NOT carry/refresh an access token: the unauthenticated
-// credential endpoints and the refresh call itself.
-const UNAUTHENTICATED_PATHS = [
-  "/auth/login",
-  "/auth/verify-otp",
-  "/auth/resend-otp",
-  "/auth/refresh",
-];
+// credential endpoint and the refresh call itself. /auth/login completes
+// sign-in on its own — the OTP step it used to lead into is gone, since the
+// platform is only reachable from the NIC LAN.
+const UNAUTHENTICATED_PATHS = ["/auth/login", "/auth/refresh"];
 
 export const api = axios.create({
   baseURL: API_BASE,
@@ -126,8 +123,8 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Credential endpoints return 401 for bad username/password/OTP — surface
-    // those, never refresh on them.
+    // The login endpoint returns 401 for a bad username/password — surface
+    // that, never refresh on it.
     if (isUnauthenticatedPath(original?.url)) {
       return Promise.reject(error);
     }

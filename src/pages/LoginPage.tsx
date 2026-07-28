@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CheckCircle2, Eye, EyeOff, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -17,13 +16,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiErrorMessage } from "@/lib/services";
 
 export default function LoginPage() {
-  const { login, verifyOtp, resendOtp, preAuthToken, otpSentTo } = useAuth();
+  const { login } = useAuth();
 
-  const [step, setStep] = React.useState<"credentials" | "otp">("credentials");
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
-  const [otp, setOtp] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
 
@@ -37,54 +34,15 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(username, password);
-      setStep("otp");
-      toast.success("OTP sent to your registered contact.", {
-        icon: <CheckCircle2 className="size-4" strokeWidth={2.5} />,
-      });
+      // AuthContext sets user → App re-renders to the authenticated state.
+      // Nothing to do here on success, and deliberately no setLoading(false):
+      // this component unmounts, and clearing it first would flash the button
+      // back to "Sign in" for a frame.
     } catch (err: unknown) {
       setError(apiErrorMessage(err, "Invalid credentials. Please try again."));
-    } finally {
       setLoading(false);
     }
   }
-
-  async function handleVerify(e: React.FormEvent) {
-    e.preventDefault();
-    if (otp.length < 6) {
-      setError("Please enter the 6-digit OTP sent to your registered contact.");
-      return;
-    }
-    setError("");
-    setLoading(true);
-    try {
-      await verifyOtp(otp);
-      // AuthContext sets user → App re-renders to authenticated state automatically
-    } catch (err: unknown) {
-      setError(apiErrorMessage(err, "Invalid or expired OTP. Please try again."));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleResend() {
-    setOtp("");
-    setError("");
-    try {
-      await resendOtp();
-      toast.success("OTP resent to your registered contact.", {
-        icon: <CheckCircle2 className="size-4" strokeWidth={2.5} />,
-      });
-    } catch (err: unknown) {
-      setError(
-        apiErrorMessage(err, "Failed to resend OTP. Please go back and try again."),
-      );
-    }
-  }
-
-  // Sync step with preAuthToken presence (handles edge cases on re-render)
-  React.useEffect(() => {
-    if (!preAuthToken && step === "otp") setStep("credentials");
-  }, [preAuthToken, step]);
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center bg-muted p-6 md:p-10">
@@ -93,10 +51,7 @@ export default function LoginPage() {
           <Card className="overflow-hidden p-0">
             <CardContent className="p-0">
               {/* ── Left: form ── */}
-              <form
-                className="p-6 md:p-8"
-                onSubmit={step === "credentials" ? handleLogin : handleVerify}
-              >
+              <form className="p-6 md:p-8" onSubmit={handleLogin}>
                 <FieldGroup>
                   {/* NIC branding */}
                   <div className="flex flex-col items-center gap-3 text-center">
@@ -119,103 +74,64 @@ export default function LoginPage() {
 
                   <div className="flex flex-col items-center gap-1 text-center">
                     <h1 className="text-xl font-semibold">
-                      {step === "credentials"
-                        ? "Sign in to your account"
-                        : "Verify your identity"}
+                      Sign in to your account
                     </h1>
                     <p className="text-sm text-muted-foreground text-balance">
-                      {step === "credentials"
-                        ? "Enter your credentials to access the platform."
-                        : `Enter the 6-digit code sent to ${otpSentTo ?? "your registered contact"}.`}
+                      Use your Nib Insurance domain username and password.
                     </p>
                   </div>
 
-                  {step === "credentials" ? (
-                    <>
-                      <Field>
-                        <FieldLabel htmlFor="username">Username</FieldLabel>
-                        <Input
-                          id="username"
-                          type="text"
-                          placeholder="e.g. admin"
-                          autoComplete="username"
-                          value={username}
-                          onChange={(e) => setUsername(e.target.value)}
-                          required
-                        />
-                      </Field>
+                  <Field>
+                    <FieldLabel htmlFor="username">Username</FieldLabel>
+                    <Input
+                      id="username"
+                      type="text"
+                      placeholder="e.g. akebede"
+                      autoComplete="username"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      autoFocus
+                      required
+                    />
+                  </Field>
 
-                      <Field>
-                        <div className="flex items-center justify-between">
-                          <FieldLabel htmlFor="password">Password</FieldLabel>
-                          <a
-                            href="#"
-                            className="text-sm text-muted-foreground underline-offset-2 hover:underline"
-                          >
-                            Forgot password?
-                          </a>
-                        </div>
-                        <div className="relative">
-                          <Input
-                            id="password"
-                            type={showPassword ? "text" : "password"}
-                            placeholder="••••••••"
-                            autoComplete="current-password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            required
-                            className="pr-9"
-                          />
-                          <button
-                            type="button"
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                            onClick={() => setShowPassword((v) => !v)}
-                            tabIndex={-1}
-                            aria-label={
-                              showPassword ? "Hide password" : "Show password"
-                            }
-                          >
-                            {showPassword ? (
-                              <EyeOff className="size-4" />
-                            ) : (
-                              <Eye className="size-4" />
-                            )}
-                          </button>
-                        </div>
-                      </Field>
-                    </>
-                  ) : (
-                    <>
-                      <Field>
-                        <FieldLabel htmlFor="otp">One-Time Password</FieldLabel>
-                        <Input
-                          id="otp"
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={6}
-                          placeholder="123456"
-                          value={otp}
-                          onChange={(e) =>
-                            setOtp(e.target.value.replace(/\D/g, ""))
-                          }
-                          className="tracking-[0.5em] text-center text-lg font-mono"
-                          autoFocus
-                          required
-                        />
-                      </Field>
-
-                      <FieldDescription className="text-center text-xs">
-                        Didn&apos;t receive it?{" "}
-                        <button
-                          type="button"
-                          className="underline underline-offset-2 hover:text-foreground"
-                          onClick={handleResend}
-                        >
-                          Resend OTP
-                        </button>
-                      </FieldDescription>
-                    </>
-                  )}
+                  <Field>
+                    <FieldLabel htmlFor="password">Password</FieldLabel>
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showPassword ? "text" : "password"}
+                        placeholder="••••••••"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        className="pr-9"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowPassword((v) => !v)}
+                        tabIndex={-1}
+                        aria-label={
+                          showPassword ? "Hide password" : "Show password"
+                        }
+                      >
+                        {showPassword ? (
+                          <EyeOff className="size-4" />
+                        ) : (
+                          <Eye className="size-4" />
+                        )}
+                      </button>
+                    </div>
+                    {/* Passwords live in Active Directory, so there is nothing
+                        this app could reset — the old "Forgot password?" link
+                        went nowhere anyway. */}
+                    <FieldDescription className="text-xs">
+                      Forgotten your password? Contact the IT department — it is
+                      managed by Active Directory, not by this platform.
+                    </FieldDescription>
+                  </Field>
 
                   {error && (
                     <p className="text-sm text-destructive text-center -mt-2">
@@ -227,30 +143,11 @@ export default function LoginPage() {
                     <Button type="submit" className="w-full" disabled={loading}>
                       {loading ? (
                         <Loader2 className="size-4 animate-spin" />
-                      ) : step === "credentials" ? (
-                        "Continue"
                       ) : (
-                        "Verify & Sign In"
+                        "Sign in"
                       )}
                     </Button>
                   </Field>
-
-                  {step === "otp" && (
-                    <Field>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="w-full"
-                        onClick={() => {
-                          setStep("credentials");
-                          setOtp("");
-                          setError("");
-                        }}
-                      >
-                        ← Back to login
-                      </Button>
-                    </Field>
-                  )}
                 </FieldGroup>
               </form>
 

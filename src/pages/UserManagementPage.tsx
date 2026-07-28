@@ -111,6 +111,7 @@ interface CreateUserDialogProps {
   onSave: (data: {
     username: string;
     displayName: string;
+    /** Blank for a domain account — AD holds the credential, not eSMS. */
     password: string;
     roleCode: string | null;
   }) => void;
@@ -156,11 +157,10 @@ function CreateUserDialog({
   }, [open]);
 
   function handleSave() {
-    const missing: string[] = [];
-    if (!adUser) missing.push("a user from AD");
-    if (!password.trim()) missing.push("a temporary password");
-    if (missing.length > 0) {
-      toast.error(`Please provide ${missing.join(", ")}.`, {
+    // Password is deliberately not required: this user signs in against Active
+    // Directory, which owns their credential.
+    if (!adUser) {
+      toast.error("Please provide a user from AD.", {
         icon: <XCircle className="size-4" strokeWidth={2.5} />,
         duration: 6000,
       });
@@ -232,7 +232,10 @@ function CreateUserDialog({
 
           <div className="space-y-1.5">
             <Label>
-              Password <span className="text-destructive">*</span>
+              Password{" "}
+              <span className="text-muted-foreground font-normal">
+                (optional)
+              </span>
             </Label>
             <div className="relative">
               <Input
@@ -256,10 +259,10 @@ function CreateUserDialog({
                 )}
               </button>
             </div>
-            <TempFieldHint>
-              Required while accounts are local — removed once AD handles
-              credentials.
-            </TempFieldHint>
+            <p className="text-xs text-muted-foreground">
+              Leave blank: this user signs in with their Active Directory
+              password. Set one only for an account AD does not hold.
+            </p>
           </div>
         </div>
 
@@ -345,9 +348,10 @@ function EditUserDialog({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-            <TempFieldHint>
-              Local credentials — temporary until AD integration.
-            </TempFieldHint>
+            <p className="text-xs text-muted-foreground">
+              Only affects accounts Active Directory does not hold. A domain
+              user&apos;s password lives in AD and cannot be changed from here.
+            </p>
           </div>
         </div>
 
@@ -549,7 +553,9 @@ export default function UserManagementPage() {
       const created = await usersApi.create({
         username: data.username,
         displayName: data.displayName,
-        password: data.password,
+        // Omitted entirely when blank, so the account is created with no local
+        // password hash at all rather than one derived from an empty string.
+        ...(data.password.trim() ? { password: data.password } : {}),
       });
       // 2) Optionally add to the current workspace if a role was selected.
       if (data.roleCode && workspaceId) {

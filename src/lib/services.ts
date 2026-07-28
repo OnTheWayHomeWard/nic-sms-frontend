@@ -85,6 +85,11 @@ export interface AuthMe {
   email: string | null;
   status: string;
   lastLoginAt: string | null;
+  /**
+   * True when this account is backed by Active Directory. Its password lives
+   * in AD and cannot be changed from this platform.
+   */
+  directoryAccount?: boolean;
   workspaces: AuthMeWorkspace[];
   currentWorkspaceId: string | null;
 }
@@ -182,7 +187,12 @@ export interface CreateUserBody {
   username: string;
   displayName: string;
   email?: string;
-  password: string;
+  /**
+   * Optional. Omit it for a domain account — that person authenticates against
+   * Active Directory and has no local credential to guess or leak. Set one only
+   * for accounts AD does not hold.
+   */
+  password?: string;
 }
 
 export interface UpdateUserBody {
