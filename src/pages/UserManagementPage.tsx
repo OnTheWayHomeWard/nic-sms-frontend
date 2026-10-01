@@ -54,7 +54,6 @@ import {
   TableRow,
 } from "@/components/ui/tablePagination";
 import { Separator } from "@/components/ui/separator";
-import { TempFieldHint } from "@/components/ui/temp-field-hint";
 
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -62,10 +61,11 @@ import {
   rolesApi,
   usersApi,
   workspacesApi,
+  type ApiAdUser,
   type ApiRole,
   type ApiUser,
 } from "@/lib/services";
-import { AD_USERS } from "@/lib/mock-ad-users";
+import { AdUserPicker } from "@/components/ui/ad-user-picker";
 import { buildUsername } from "@/lib/username";
 
 // ─── Types & constants ────────────────────────────────────────────────────────
@@ -111,6 +111,8 @@ interface CreateUserDialogProps {
   onSave: (data: {
     username: string;
     displayName: string;
+    /** sAMAccountName of the AD account picked for this user. */
+    adSam: string;
     /** Blank for a domain account — AD holds the credential, not eSMS. */
     password: string;
     roleCode: string | null;
@@ -125,7 +127,7 @@ function CreateUserDialog({
   onSave,
 }: CreateUserDialogProps) {
   const { user: currentUser } = useAuth();
-  const [adUser, setAdUser] = React.useState("");
+  const [adUser, setAdUser] = React.useState<ApiAdUser | null>(null);
   const [roleCode, setRoleCode] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
@@ -140,7 +142,7 @@ function CreateUserDialog({
         ? buildUsername(
             currentUser?.workspaceName ?? "",
             roleLabel,
-            adUser,
+            adUser.displayName,
             currentUser?.division ?? "",
           )
         : "",
@@ -149,7 +151,7 @@ function CreateUserDialog({
 
   React.useEffect(() => {
     if (open) {
-      setAdUser("");
+      setAdUser(null);
       setRoleCode("");
       setPassword("");
       setShowPassword(false);
@@ -168,7 +170,8 @@ function CreateUserDialog({
     }
     onSave({
       username,
-      displayName: adUser,
+      displayName: adUser.displayName,
+      adSam: adUser.samAccountName,
       password,
       roleCode: roleCode || null,
     });
@@ -201,17 +204,7 @@ function CreateUserDialog({
             <Label>
               Select User <span className="text-destructive">*</span>
             </Label>
-            <SearchableSelect
-              items={AD_USERS.map((u) => ({ value: u, label: u }))}
-              value={adUser}
-              onValueChange={setAdUser}
-              placeholder="Select user from AD"
-              searchPlaceholder="Search users…"
-              emptyText="No matching users."
-            />
-            <TempFieldHint>
-              Temporary mock list — AD integration pending.
-            </TempFieldHint>
+            <AdUserPicker value={adUser} onValueChange={setAdUser} />
           </div>
 
           <div className="space-y-1.5" data-guide="um-role">
@@ -544,6 +537,7 @@ export default function UserManagementPage() {
   async function handleCreate(data: {
     username: string;
     displayName: string;
+    adSam: string;
     password: string;
     roleCode: string | null;
   }) {
@@ -553,6 +547,7 @@ export default function UserManagementPage() {
       const created = await usersApi.create({
         username: data.username,
         displayName: data.displayName,
+        adSam: data.adSam,
         // Omitted entirely when blank, so the account is created with no local
         // password hash at all rather than one derived from an empty string.
         ...(data.password.trim() ? { password: data.password } : {}),

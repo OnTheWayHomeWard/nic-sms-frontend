@@ -193,6 +193,13 @@ export interface CreateUserBody {
    * for accounts AD does not hold.
    */
   password?: string;
+  /**
+   * sAMAccountName of the AD account this user is (from adApi.searchUsers).
+   * Links the eSMS row to the directory so their first AD sign-in lands on it
+   * instead of provisioning a second account. The backend verifies it against
+   * AD and takes displayName/email from there.
+   */
+  adSam?: string;
 }
 
 export interface UpdateUserBody {
@@ -215,6 +222,29 @@ export const usersApi = {
     api.post<ApiUser>(`/users/${id}/activate`).then((r) => r.data),
   deactivate: (id: string) =>
     api.post<ApiUser>(`/users/${id}/deactivate`).then((r) => r.data),
+};
+
+// ── Active Directory (GET /ad/users) ──────────────────────────────────────────
+
+export interface ApiAdUser {
+  samAccountName: string;
+  displayName: string;
+  email: string | null;
+  /** The eSMS user already linked to this AD account, or null. */
+  existingUserId: string | null;
+}
+
+export interface ApiAdUserSearch {
+  users: ApiAdUser[];
+  /** More accounts matched than were returned — narrow the query. */
+  truncated: boolean;
+}
+
+export const adApi = {
+  searchUsers: (q: string, limit = 50, signal?: AbortSignal) =>
+    api
+      .get<ApiAdUserSearch>("/ad/users", { params: { q, limit }, signal })
+      .then((r) => r.data),
 };
 
 // ── Workspaces (GET/POST/PATCH /workspaces + members) ─────────────────────────
