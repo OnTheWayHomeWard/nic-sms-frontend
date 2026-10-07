@@ -15,22 +15,15 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { auditLogsApi } from "@/lib/services";
 import type { ApiAuditLog } from "@/lib/services";
+import { formatEatShort } from "@/lib/eat-time";
 
 function severityClass(severity: string) {
   if (severity === "INFO") return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400";
   if (severity === "WARN") return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400";
-  // HIGH maps to red (backend has no "ERROR" — it uses "HIGH")
+  // CRITICAL (the backend's highest severity) maps to red
   return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400";
 }
 
-function fmtTs(iso: string) {
-  return new Date(iso).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 export default function AuditEvents() {
   const navigate = useNavigate();
@@ -75,9 +68,15 @@ export default function AuditEvents() {
                   {event.severity}
                 </Badge>
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold">{event.action}</p>
+                  <p className="text-xs font-semibold">
+                    {event.description ?? event.action}
+                    {event.outcome === "FAILURE" && (
+                      <span className="ml-1.5 text-red-600 dark:text-red-400">(failed)</span>
+                    )}
+                  </p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {event.actorUsername ?? "system"} • {fmtTs(event.createdAt)}
+                    {event.actorDisplayName ?? event.actorUsername ?? "system"} •{" "}
+                    {formatEatShort(event.createdAt)}
                   </p>
                 </div>
               </div>

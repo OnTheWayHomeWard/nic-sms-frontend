@@ -9,6 +9,8 @@ export function apiErrorMessage(err: unknown, fallback: string): string {
       response?: {
         data?: {
           title?: string;
+          detail?: string;
+          status?: number;
           message?: string;
           errors?: { error?: string; message?: string; field?: string }[];
         };
@@ -22,6 +24,12 @@ export function apiErrorMessage(err: unknown, fallback: string): string {
   // upload-time failure showed the generic fallback string instead of e.g.
   // "Required columns 'phone' not found. Detected columns: [...]".
   const firstError = data?.errors?.[0];
+  // GlobalExceptionHandler maps IllegalArgumentException to a 400 whose
+  // title is the generic "Bad request" and whose detail is the actual reason
+  // (e.g. "Message is too long: ... 11 SMS segments, but the maximum is 10").
+  if (data?.status === 400 && data?.title === "Bad request" && data?.detail) {
+    return data.detail;
+  }
   return (
     data?.title ??
     data?.message ??
@@ -85,11 +93,6 @@ export interface AuthMe {
   email: string | null;
   status: string;
   lastLoginAt: string | null;
-  /**
-   * True when this account is backed by Active Directory. Its password lives
-   * in AD and cannot be changed from this platform.
-   */
-  directoryAccount?: boolean;
   workspaces: AuthMeWorkspace[];
   currentWorkspaceId: string | null;
 }
@@ -155,7 +158,7 @@ export function codeToUiRole(code: string | null | undefined): UiRoleLabel | "" 
   }
 }
 
-// ── Users (GET/POST/PATCH /users) ─────────────────────────────────────────────
+// ── Users (GET/POST /users) ─────────────────────────────────────────────
 
 export type ApiUserStatus = "ACTIVE" | "DISABLED";
 
@@ -183,29 +186,14 @@ export interface ApiUser {
   memberships: ApiMembership[];
 }
 
-export interface CreateUserBody {
-  username: string;
-  displayName: string;
-  email?: string;
-  /**
-   * Optional. Omit it for a domain account — that person authenticates against
-   * Active Directory and has no local credential to guess or leak. Set one only
-   * for accounts AD does not hold.
-   */
-  password?: string;
-  /**
-   * sAMAccountName of the AD account this user is (from adApi.searchUsers).
-   * Links the eSMS row to the directory so their first AD sign-in lands on it
-   * instead of provisioning a second account. The backend verifies it against
-   * AD and takes displayName/email from there.
-   */
-  adSam?: string;
-}
-
-export interface UpdateUserBody {
-  displayName?: string;
-  email?: string;
-  password?: string;
+/**
+ * Active Directory owns identity: username (= sAMAccountName), display name,
+ * email and password all come from AD and can't be set or changed here. The
+ * only thing sent is which AD account to add.
+ */
+export interface AddAdUserBody {
+  /** sAMAccountName of the AD account (from adApi.searchUsers). */
+  adSam: string;
 }
 
 export const usersApi = {
@@ -214,10 +202,13 @@ export const usersApi = {
       .get<ApiUser[]>("/users", { params: status ? { status } : undefined })
       .then((r) => r.data),
   get: (id: string) => api.get<ApiUser>(`/users/${id}`).then((r) => r.data),
-  create: (body: CreateUserBody) =>
+  /**
+   * Adds an AD account to eSMS, or returns its existing eSMS user if it
+   * already has one. Grant workspace + role afterwards via
+   * workspacesApi.addMember.
+   */
+  addFromAd: (body: AddAdUserBody) =>
     api.post<ApiUser>("/users", body).then((r) => r.data),
-  update: (id: string, body: UpdateUserBody) =>
-    api.patch<ApiUser>(`/users/${id}`, body).then((r) => r.data),
   activate: (id: string) =>
     api.post<ApiUser>(`/users/${id}/activate`).then((r) => r.data),
   deactivate: (id: string) =>
@@ -374,7 +365,8 @@ export interface CreateTemplateBody {
   name: string;
   description?: string;
   body: string;
-  encoding?: string; // "GSM7" | "UCS2"
+  /** Ignored by the backend: always derived from the body. Not sent. */
+  encoding?: string;
   variables?: string[];
   sender?: string;
   recipientGroupId?: string;
@@ -492,11 +484,12 @@ export interface ApiUploadHistory {
 
 /**
  * The backend (ExcelUploadService) never accepts a client-supplied column
- * mapping — it auto-detects the phone column by exact, case-insensitive
- * match against this fixed list, and fails the whole upload with "Required
- * columns 'phone' not found" if none match. These strings are copied
- * verbatim from that matcher so the UI can warn *before* uploading a file
- * whose header the backend will never recognize.
+ * mapping — it auto-detects the phone column by matching the header against
+ * this fixed list, ignoring case, spaces, underscores and hyphens (so
+ * "Phone Number" == "phone_number" == "PHONE-NUMBER"), and fails the whole
+ * upload with "Required columns 'phone' not found" if none match. Keep this
+ * in sync with ExcelUploadService.PHONE_HEADERS so the UI can warn *before*
+ * uploading a file whose header the backend will never recognize.
  */
 export const BACKEND_RECOGNIZED_PHONE_HEADERS = [
   "phone",
@@ -505,11 +498,19 @@ export const BACKEND_RECOGNIZED_PHONE_HEADERS = [
   "phoneE164",
   "phone_e164",
   "Mobile",
+  "Mobile Number",
 ];
 
+function phoneHeaderKey(header: string): string {
+  return header
+    .replace(/[\uFEFF\u200B]/g, "")
+    .toLowerCase()
+    .replace(/[\s_-]/g, "");
+}
+
 export function isBackendRecognizedPhoneHeader(header: string): boolean {
-  const h = header.trim().toLowerCase();
-  return BACKEND_RECOGNIZED_PHONE_HEADERS.some((c) => c.toLowerCase() === h);
+  const h = phoneHeaderKey(header);
+  return BACKEND_RECOGNIZED_PHONE_HEADERS.some((c) => phoneHeaderKey(c) === h);
 }
 
 /**
@@ -687,6 +688,8 @@ export interface DashboardSummary {
   activeUsers30d: number;
   /** Messages created today (for the daily-limit usage bar). */
   todayMessages: number;
+  /** SMS segments created today (a 3-part message counts 3). Newer backends only. */
+  todaySegments?: number;
   /** The workspace's daily SMS cap, or null if unlimited. */
   dailySmsLimit: number | null;
   workspaceId: string | null;
@@ -817,18 +820,59 @@ export const reportsApi = {
 
 // ── Audit Logs (GET /audit-logs) ───────────────────────────────────────────────
 
+export type AuditSeverity = "INFO" | "WARN" | "CRITICAL";
+export type AuditOutcome = "SUCCESS" | "FAILURE";
+
+/** One changed field of an update; secrets arrive already masked as "***". */
+export interface AuditChange {
+  before: unknown;
+  after: unknown;
+}
+
 export interface ApiAuditLog {
   id: string;
+  seq: number | null;
   workspaceId: string | null;
   actorUserId: string | null;
+  /** Username, or the attempted username for a failed login. */
   actorUsername: string | null;
+  actorDisplayName: string | null;
+  actorRole: string | null;
   category: string;
-  severity: string; // "INFO" | "WARN" | "HIGH"
+  severity: AuditSeverity;
+  /** Machine action code, e.g. CONTACT_UPDATED. */
   action: string;
+  /** Human-readable action, e.g. "Updated contact". */
+  description: string | null;
   entityType: string | null;
   entityId: string | null;
+  outcome: AuditOutcome;
+  errorReason: string | null;
+  changes: Record<string, AuditChange> | null;
+  detail: Record<string, unknown> | null;
   ipAddress: string | null;
+  userAgent: string | null;
+  /** UTC ISO instant. */
   createdAt: string;
+}
+
+export interface AuditLogQuery {
+  severity?: string;
+  workspaceId?: string;
+  search?: string;
+  outcome?: AuditOutcome;
+  category?: string;
+  entityType?: string;
+  entityId?: string;
+  actor?: string;
+  action?: string;
+  /** ISO instants (UTC). */
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  size?: number;
+  /** e.g. "createdAt,desc" */
+  sort?: string;
 }
 
 export interface SpringPage<T> {
@@ -839,18 +883,27 @@ export interface SpringPage<T> {
   number: number;
 }
 
+const listAuditLogs = (params?: AuditLogQuery): Promise<SpringPage<ApiAuditLog>> =>
+  api
+    .get<SpringPage<ApiAuditLog>>("/audit-logs", { params })
+    .then((r) => r.data);
+
 export const auditLogsApi = {
-  list: (params?: {
-    severity?: string;
-    workspaceId?: string;
-    search?: string;
-    page?: number;
-    size?: number;
-    sort?: string;
-  }) =>
-    api
-      .get<SpringPage<ApiAuditLog>>("/audit-logs", { params })
-      .then((r) => r.data),
+  list: listAuditLogs,
+  /**
+   * Every entry matching the filters (not just the visible page), fetched
+   * page by page for export. Capped so a huge log cannot hang the browser.
+   */
+  listAll: async (params: Omit<AuditLogQuery, "page" | "size">, max = 10000) => {
+    const out: ApiAuditLog[] = [];
+    const size = 500;
+    for (let page = 0; out.length < max; page++) {
+      const res = await listAuditLogs({ ...params, page, size });
+      out.push(...res.content);
+      if (page + 1 >= res.totalPages) break;
+    }
+    return out.slice(0, max);
+  },
 };
 
 // ── Delegations (GET/POST /delegations) ───────────────────────────────────────

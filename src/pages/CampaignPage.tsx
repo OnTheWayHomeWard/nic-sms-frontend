@@ -96,6 +96,8 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { hasPermission } from "@/lib/permissions";
 import { sampleFromHeaders, sampleFromMember } from "@/lib/templates";
+import { SmsCounter } from "@/components/sms-counter";
+import { hasPlaceholders } from "@/lib/sms-segments";
 
 // ─── Sort / direction types ─────────────────────────────────────────────────────
 
@@ -322,6 +324,14 @@ function resolvePreviewFilled(
   );
 }
 
+/** Plain-text counterpart of resolvePreviewFilled, for segment counting. */
+function fillPreviewText(text: string, sample: Record<string, string>): string {
+  return text
+    .split(/(\{\{[^}]+\}\})/g)
+    .map((part) => sample[part] ?? part)
+    .join("");
+}
+
 /** Resolves what to actually show as a campaign/reminder's message: its own
  * custom body if set, otherwise the body of the template it references (so
  * template-based items never render as an unhelpful placeholder), flagged so
@@ -540,8 +550,6 @@ function EditCampaignDialog({
 
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
-  const charCount = message.length;
-  const smsCount = Math.ceil(charCount / 160) || 1;
 
   const selectedTemplate = templates.find((t) => t.id === templateId);
   const selectedGroup = groups.find((g) => g.id === contactGroupId);
@@ -848,9 +856,7 @@ function EditCampaignDialog({
                           Message Text{" "}
                           <span className="text-destructive">*</span>
                         </Label>
-                        <TypographyMuted className="text-xs">
-                          {charCount}/160
-                        </TypographyMuted>
+                        <SmsCounter text={message} compact />
                       </div>
                       <Textarea
                         id="edit-message"
@@ -862,9 +868,7 @@ function EditCampaignDialog({
                         className="resize-none"
                       />
                       <div className="flex items-center justify-between flex-wrap gap-2">
-                        <TypographyMuted className="text-xs">
-                          {charCount} / 160 chars · {smsCount} SMS
-                        </TypographyMuted>
+                        <SmsCounter text={message} />
                         <div className="flex gap-1.5 flex-wrap">
                           {dynamicVariables.map((v) => (
                             <Button
@@ -1254,12 +1258,26 @@ function LivePreviewDialog({
               : <span className="text-muted-foreground italic">—</span>}
           </div>
           {preview.text !== "—" && (
-            <TypographyMuted className="text-xs">
-              {preview.text.length} chars &middot;{" "}
-              {Math.ceil(preview.text.length / 160)} SMS part
-              {Math.ceil(preview.text.length / 160) !== 1 ? "s" : ""}
-              {Object.keys(firstRecipientSample).length > 0 && " · preview uses recipient 1"}
-            </TypographyMuted>
+            <div className="flex flex-wrap items-baseline gap-x-1">
+              {/* Counted on recipient 1's personalised text when a sample is
+                  available (exactly what that recipient is billed), else on
+                  the raw text as an estimate. */}
+              <SmsCounter
+                text={
+                  Object.keys(firstRecipientSample).length > 0
+                    ? fillPreviewText(preview.text, firstRecipientSample)
+                    : preview.text
+                }
+                estimate={
+                  Object.keys(firstRecipientSample).length === 0 &&
+                  hasPlaceholders(preview.text)
+                }
+                compact
+              />
+              {Object.keys(firstRecipientSample).length > 0 && (
+                <TypographyMuted className="text-xs">· preview uses recipient 1</TypographyMuted>
+              )}
+            </div>
           )}
         </div>
 

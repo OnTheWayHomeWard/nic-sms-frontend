@@ -65,6 +65,7 @@ import {
   type DateCalendar,
 } from "@/components/ui/column-map-dialog";
 import { parseEthiopianDateValue } from "@/lib/ethiopian-calendar";
+import { SmsCounter } from "@/components/sms-counter";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -319,8 +320,6 @@ function ReminderFormDialog({
   const sampleInputRef = React.useRef<HTMLInputElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
-  const charCount = formMessage.length;
-  const smsCount = Math.ceil(charCount / 160) || 1;
   const previewSample = React.useMemo(
     () => sampleFromHeaders(formHeaders),
     [formHeaders],
@@ -629,9 +628,7 @@ function ReminderFormDialog({
                 </div>
 
                 <div className="flex items-start justify-between flex-wrap gap-2">
-                  <TypographyMuted className="text-xs">
-                    {charCount} / 160 chars · {smsCount} SMS
-                  </TypographyMuted>
+                  <SmsCounter text={formMessage} />
                   {variables.length > 0 ? (
                     <div className="flex gap-1.5 flex-wrap justify-end">
                       {variables.map((v) => (

@@ -44,10 +44,34 @@ const RETENTION_OPTIONS: { label: string; days: string }[] = [
   { label: "2 Years", days: "730" },
 ];
 function daysToLabel(days: string): string {
-  return RETENTION_OPTIONS.find((o) => o.days === days)?.label ?? "";
+  if (!days) return "";
+  // A value set outside this page (e.g. the 90-day seed changed in the DB)
+  // must still load — otherwise the field showed blank and Save was blocked.
+  return RETENTION_OPTIONS.find((o) => o.days === days)?.label ?? `${days} days`;
 }
 function labelToDays(label: string): string {
-  return RETENTION_OPTIONS.find((o) => o.label === label)?.days ?? "";
+  return (
+    RETENTION_OPTIONS.find((o) => o.label === label)?.days ??
+    (/^(\d+) days$/.exec(label)?.[1] ?? "")
+  );
+}
+
+// Mirrors SystemSettingsService.RULES on the backend (which re-validates).
+const LIMITS: Record<string, { min: number; max: number; label: string }> = {
+  [KEY_ETHIO_RATE]: { min: 1, max: 10000, label: "Rate limit" },
+  [KEY_SAF_RATE]: { min: 1, max: 10000, label: "Rate limit" },
+  [KEY_RETRY]: { min: 0, max: 10, label: "Retry attempts" },
+  [KEY_SESSION]: { min: 1, max: 1440, label: "Session timeout" },
+};
+
+function validate(key: string, value: string): string | null {
+  const rule = LIMITS[key];
+  if (!rule) return null;
+  const v = value.trim();
+  if (!/^\d+$/.test(v) || Number(v) < rule.min || Number(v) > rule.max) {
+    return `${rule.label} must be a whole number between ${rule.min} and ${rule.max}.`;
+  }
+  return null;
 }
 
 export default function SystemSettingsPage() {
@@ -99,6 +123,18 @@ export default function SystemSettingsPage() {
       return;
     }
 
+    const invalid =
+      validate(rateKey, rateValue) ??
+      validate(KEY_RETRY, retryAttempts) ??
+      validate(KEY_SESSION, sessionTimeout);
+    if (invalid) {
+      toast.error(invalid, {
+        icon: <XCircle className="size-4" strokeWidth={2.5} />,
+        duration: 7000,
+      });
+      return;
+    }
+
     const updates: Record<string, string> = {
       [rateKey]: rateValue.trim(),
       [KEY_RETRY]: retryAttempts.trim(),
@@ -106,7 +142,16 @@ export default function SystemSettingsPage() {
       [KEY_RETENTION]: labelToDays(retention),
     };
 
-    toast.promise(settingsApi.update(updates), {
+    // Reflect what the server actually stored (it normalizes values).
+    const request = settingsApi.update(updates).then((s) => {
+      setEthioRateLimit(s[KEY_ETHIO_RATE] ?? "");
+      setSafRateLimit(s[KEY_SAF_RATE] ?? "");
+      setRetryAttempts(s[KEY_RETRY] ?? "");
+      setSessionTimeout(s[KEY_SESSION] ?? "");
+      setRetention(daysToLabel(s[KEY_RETENTION] ?? ""));
+      return s;
+    });
+    toast.promise(request, {
       loading: "Saving changes...",
       success: `${gatewayName} settings updated successfully!`,
       error: (e) => apiErrorMessage(e, "Failed to save gateway settings."),
@@ -119,7 +164,7 @@ export default function SystemSettingsPage() {
   }
 
   function handleSaveSafaricom() {
-    save(KEY_SAF_RATE, safRateLimit, "Safaricom");
+    save(KEY_SAF_RATE, safRateLimit, "Safaricom Ethiopia");
   }
 
   return (
@@ -140,7 +185,7 @@ export default function SystemSettingsPage() {
       <Tabs defaultValue="ethio" className="space-y-6">
         <TabsList data-guide="settings-tabs">
           <TabsTrigger value="ethio">Ethio Telecom Gateway</TabsTrigger>
-          <TabsTrigger value="safaricom">Safaricom Gateway</TabsTrigger>
+          <TabsTrigger value="safaricom">Safaricom Ethiopia Gateway</TabsTrigger>
         </TabsList>
 
         {/* Ethio Telecom */}
@@ -149,10 +194,12 @@ export default function SystemSettingsPage() {
             {/* Rate Limit */}
             <div className="space-y-2" data-guide="ss-rate">
               <Label htmlFor="ethio-rate-limit">
-                Rate Limit <span className="text-destructive">*</span>
+                Rate Limit (SMS parts / second){" "}
+                <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="ethio-rate-limit"
+                inputMode="numeric"
                 value={ethioRateLimit}
                 onChange={(e) => setEthioRateLimit(e.target.value)}
                 placeholder="500"
@@ -168,6 +215,7 @@ export default function SystemSettingsPage() {
               </Label>
               <Input
                 id="ethio-retry-attempts"
+                inputMode="numeric"
                 value={retryAttempts}
                 onChange={(e) => setRetryAttempts(e.target.value)}
                 placeholder="3"
@@ -179,10 +227,12 @@ export default function SystemSettingsPage() {
             {/* Session Timeout */}
             <div className="space-y-2">
               <Label htmlFor="ethio-session-timeout">
-                Session Timeout <span className="text-destructive">*</span>
+                Session Timeout (minutes){" "}
+                <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="ethio-session-timeout"
+                inputMode="numeric"
                 value={sessionTimeout}
                 onChange={(e) => setSessionTimeout(e.target.value)}
                 placeholder="5"
@@ -202,6 +252,9 @@ export default function SystemSettingsPage() {
                   <SelectValue placeholder="Select retention" />
                 </SelectTrigger>
                 <SelectContent>
+                  {retention && !RETENTION_OPTIONS.some((o) => o.label === retention) && (
+                    <SelectItem value={retention}>{retention}</SelectItem>
+                  )}
                   {RETENTION_OPTIONS.map((o) => (
                     <SelectItem key={o.days} value={o.label}>
                       {o.label}
@@ -225,10 +278,12 @@ export default function SystemSettingsPage() {
             {/* Rate Limit */}
             <div className="space-y-2">
               <Label htmlFor="saf-rate-limit">
-                Rate Limit <span className="text-destructive">*</span>
+                Rate Limit (SMS parts / second){" "}
+                <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="saf-rate-limit"
+                inputMode="numeric"
                 value={safRateLimit}
                 onChange={(e) => setSafRateLimit(e.target.value)}
                 placeholder="500"
@@ -244,6 +299,7 @@ export default function SystemSettingsPage() {
               </Label>
               <Input
                 id="saf-retry-attempts"
+                inputMode="numeric"
                 value={retryAttempts}
                 onChange={(e) => setRetryAttempts(e.target.value)}
                 placeholder="3"
@@ -255,10 +311,12 @@ export default function SystemSettingsPage() {
             {/* Session Timeout */}
             <div className="space-y-2">
               <Label htmlFor="saf-session-timeout">
-                Session Timeout <span className="text-destructive">*</span>
+                Session Timeout (minutes){" "}
+                <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="saf-session-timeout"
+                inputMode="numeric"
                 value={sessionTimeout}
                 onChange={(e) => setSessionTimeout(e.target.value)}
                 placeholder="5"
@@ -278,6 +336,9 @@ export default function SystemSettingsPage() {
                   <SelectValue placeholder="Select retention" />
                 </SelectTrigger>
                 <SelectContent>
+                  {retention && !RETENTION_OPTIONS.some((o) => o.label === retention) && (
+                    <SelectItem value={retention}>{retention}</SelectItem>
+                  )}
                   {RETENTION_OPTIONS.map((o) => (
                     <SelectItem key={o.days} value={o.label}>
                       {o.label}

@@ -25,7 +25,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { ModeToggle } from "./components/mode-toggle";
 import { PageGuideButton } from "./components/page-guide";
-import { forceRefresh, TOKEN_STORAGE_KEY } from "@/lib/api";
+import { forceRefresh, getAccessTokenExpiryMs } from "@/lib/api";
 import { useAuth } from "./contexts/AuthContext";
 import { canAccessRoute, FEATURE_GATE } from "./lib/permissions";
 import AllUsersPage from "./pages/AllUsersPage";
@@ -44,24 +44,18 @@ import ContactManagementPage from "./pages/ContactManagementPage";
 import UserManagementPage from "./pages/UserManagementPage";
 
 // ─── Idle logout ─────────────────────────────────────────────────────────────
-// Tracks the JWT's own exp claim — the same counter the backend uses.
-// Activity that triggers API calls refreshes the token (and thus exp).
-// "Stay signed in" forces an immediate refresh.
+// Tracks the access token's expiry (measured on the local clock — see
+// getAccessTokenExpiryMs). The backend's idle window is never shorter than the
+// token's lifetime and is reset whenever a token is issued, so while this
+// dialog is showing the session can still be extended. Activity that triggers
+// API calls refreshes the token (and thus exp). "Stay signed in" forces an
+// immediate refresh; the poll re-reads the stored token, so the countdown
+// restarts from the new token's expiry.
 
 const WARN_BEFORE_MS = 60 * 1000; // show dialog 60 s before token expiry
-
-function getTokenExpMs(): number | null {
-  const token = sessionStorage.getItem(TOKEN_STORAGE_KEY);
-  if (!token) return null;
-  try {
-    const payload = JSON.parse(
-      atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
-    );
-    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
-  } catch {
-    return null;
-  }
-}
+// Sign out a few seconds early so a last-moment "Stay signed in" never races
+// the server-side expiry.
+const EXPIRY_MARGIN_MS = 5 * 1000;
 
 function IdleLogoutWarning({ onLogout }: { onLogout: () => void }) {
   const [secondsLeft, setSecondsLeft] = React.useState<number | null>(null);
@@ -73,12 +67,20 @@ function IdleLogoutWarning({ onLogout }: { onLogout: () => void }) {
   // between, still reads the OLD (near-expiry) token, and re-shows the dialog
   // for a frame before the new token lands — the brief second-popup flash.
   const refreshingRef = React.useRef(false);
+  // Set once the countdown runs out, so the poll doesn't fire logout (and the
+  // toast) again every 500 ms while the logout request is in flight.
+  const expiredRef = React.useRef(false);
 
   const staySignedIn = React.useCallback(() => {
     setSecondsLeft(null);
     refreshingRef.current = true;
     forceRefresh()
-      .catch(() => {})
+      .catch(() => {
+        // refreshAccessToken has already fired auth:logout — say why.
+        toast.error("Your session could not be extended. Please sign in again.", {
+          duration: 8000,
+        });
+      })
       .finally(() => { refreshingRef.current = false; });
   }, []);
 
@@ -86,11 +88,13 @@ function IdleLogoutWarning({ onLogout }: { onLogout: () => void }) {
     const id = setInterval(() => {
       // Hold the dialog closed while a refresh is in flight — the stale token
       // still looks expiring until the new one is stored.
-      if (refreshingRef.current) return;
-      const exp = getTokenExpMs();
+      if (refreshingRef.current || expiredRef.current) return;
+      const exp = getAccessTokenExpiryMs();
       if (exp === null) return;
-      const remaining = exp - Date.now();
+      const remaining = exp - EXPIRY_MARGIN_MS - Date.now();
       if (remaining <= 0) {
+        expiredRef.current = true;
+        setSecondsLeft(null);
         toast.warning("You were signed out because your session expired.", {
           duration: 8000,
         });

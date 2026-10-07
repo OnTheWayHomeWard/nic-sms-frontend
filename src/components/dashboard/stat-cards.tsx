@@ -90,7 +90,9 @@ export default function StatCards() {
   ];
 
   const limit = summary?.dailySmsLimit ?? null;
-  const usedToday = summary?.todayMessages ?? 0;
+  // Usage is measured in SMS segments: a long or Amharic message is several
+  // SMS to the operator. Falls back to messages on an older backend.
+  const usedToday = summary?.todaySegments ?? summary?.todayMessages ?? 0;
   const usagePct = limit && limit > 0 ? Math.min(100, (usedToday / limit) * 100) : 100;
   const atLimit = limit != null && usedToday >= limit;
 

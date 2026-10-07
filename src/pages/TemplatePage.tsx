@@ -74,6 +74,8 @@ import {
   type ApiTemplate,
   type GroupMember,
 } from "@/lib/services";
+import { SmsCounter } from "@/components/sms-counter";
+import { detectEncoding, encodingLabel } from "@/lib/sms-segments";
 
 // ─── Types & helpers ─────────────────────────────────────────────────────────
 
@@ -128,10 +130,6 @@ function extractVariables(body: string): string[] {
   return [...new Set(names)];
 }
 
-/** GSM-7 unless the body contains non-ASCII characters (→ UCS-2). */
-function detectEncoding(body: string): "GSM7" | "UCS2" {
-  return /[^\x00-\x7F]/.test(body) ? "UCS2" : "GSM7";
-}
 
 
 function formatDate(iso: string | null | undefined): string {
@@ -317,7 +315,6 @@ interface TemplateSaveData {
   body: string;
   sender: string;
   variables: string[];
-  encoding: string;
   recipientGroupId: string;
 }
 
@@ -350,8 +347,6 @@ function TemplateFormDialog({
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
   const sender = initialTemplate?.sender ?? DEFAULT_SENDER;
-  const charCount = body.length;
-  const smsCount = Math.ceil(charCount / 160) || 1;
 
   const selectedGroup = groups.find((g) => g.id === groupId);
   const activeHeaders = selectedGroup?.fields ?? [];
@@ -412,7 +407,6 @@ function TemplateFormDialog({
       body: body.trim(),
       sender,
       variables: extractVariables(body),
-      encoding: detectEncoding(body),
       recipientGroupId: groupId,
     });
   }
@@ -516,9 +510,7 @@ function TemplateFormDialog({
                           Message Text{" "}
                           <span className="text-destructive">*</span>
                         </Label>
-                        <TypographyMuted className="text-xs">
-                          {charCount}/160
-                        </TypographyMuted>
+                        <SmsCounter text={body} compact />
                       </div>
                       <Textarea
                         id="tpl-message"
@@ -532,10 +524,7 @@ function TemplateFormDialog({
                     </div>
 
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                      <TypographyMuted className="text-xs">
-                        {charCount} / 160 chars · {smsCount} SMS ·{" "}
-                        {detectEncoding(body)}
-                      </TypographyMuted>
+                      <SmsCounter text={body} />
                       <div className="flex gap-1.5 flex-wrap" data-guide="tf-variables">
                         {dynamicVariables.map((v) => (
                           <Button
@@ -787,7 +776,7 @@ function TemplatePreviewDialog({
             <span>
               Encoding:{" "}
               <span className="font-mono font-medium text-foreground">
-                {template.encoding ?? "GSM7"}
+                {encodingLabel(template.encoding ?? detectEncoding(template.body))}
               </span>
             </span>
             <span>
@@ -954,7 +943,6 @@ export default function TemplatePage() {
         name: data.name,
         body: data.body,
         sender: data.sender,
-        encoding: data.encoding,
         variables: data.variables,
         recipientGroupId: data.recipientGroupId,
       });
@@ -981,7 +969,6 @@ export default function TemplatePage() {
         name: data.name,
         body: data.body,
         sender: data.sender,
-        encoding: data.encoding,
         variables: data.variables,
         recipientGroupId: data.recipientGroupId,
       });
@@ -1371,7 +1358,7 @@ export default function TemplatePage() {
                         </TableCell>
                         <TableCell>
                           <span className="font-mono text-xs">
-                            {tpl.encoding ?? "GSM7"}
+                            {encodingLabel(tpl.encoding ?? detectEncoding(tpl.body))}
                           </span>
                         </TableCell>
                         <TableCell className="text-sm">

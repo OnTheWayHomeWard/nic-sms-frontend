@@ -48,6 +48,7 @@ import {
   type CreateCampaignBody,
 } from "@/lib/services";
 import { ColumnMapDialog } from "@/components/ui/column-map-dialog";
+import { SmsCounter } from "@/components/sms-counter";
 
 const DEFAULT_SAMPLE: Record<string, string> = {
   "{{Name}}": "Abebe Girma",
@@ -178,9 +179,6 @@ export default function ComposePage() {
       setGroupFirstMemberSample(sampleFromMember(fields, members[0]));
     }).catch(() => {});
   }, [useContactGroups, contactGroup, groups]);
-
-  const charCount = messageText.length;
-  const smsCount = Math.ceil(charCount / 160) || 1;
 
   const selectedGroupObj = groups.find((g) => g.id === contactGroup);
   const selectedTemplateObj = templates.find((t) => t.id === selectedTemplate);
@@ -823,9 +821,7 @@ export default function ComposePage() {
                           className="min-h-30 resize-none"
                         />
                         <div className="flex items-center justify-between flex-wrap gap-2">
-                          <TypographyMuted className="my-2">
-                            {charCount} / 160 chars · {smsCount} SMS
-                          </TypographyMuted>
+                          <SmsCounter text={messageText} className="my-2" />
                           <div className="flex gap-1.5 flex-wrap">
                             {isParsing ? (
                               <>

@@ -1,5 +1,11 @@
 import * as React from "react";
-import { api, clearAuthHeader, TOKEN_STORAGE_KEY } from "@/lib/api";
+import {
+  api,
+  clearAuthHeader,
+  clearStoredAccessToken,
+  storeAccessToken,
+  TOKEN_STORAGE_KEY,
+} from "@/lib/api";
 import { authApi, workspacesApi, type AuthMe } from "@/lib/services";
 import type { UserRole } from "@/lib/permissions";
 
@@ -122,7 +128,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Listen for interceptor-triggered logout (refresh token expired)
   React.useEffect(() => {
     function handleForceLogout() {
-      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      clearStoredAccessToken();
       clearAuthHeader();
       setUser(null);
       setRolePermissions([]);
@@ -213,7 +219,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user?: Partial<AuthUser>;
     }>("/auth/login", { username, password });
 
-    sessionStorage.setItem(TOKEN_STORAGE_KEY, data.accessToken);
+    storeAccessToken(data.accessToken);
     const decoded = userFromToken(data.accessToken);
     // Merge any explicit user fields from the response body
     setUser(
@@ -241,7 +247,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // best-effort
     } finally {
-      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      clearStoredAccessToken();
       clearAuthHeader();
       setUser(null);
       setRolePermissions([]);

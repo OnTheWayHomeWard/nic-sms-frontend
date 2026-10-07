@@ -14,8 +14,10 @@ const SEARCH_DEBOUNCE_MS = 300;
  * Picks a staff account from Active Directory. Same look as SearchableSelect,
  * but the search runs in the directory (GET /ad/users) rather than over a
  * list held in memory — the domain holds far more accounts than are worth
- * loading up front. Accounts that already have an eSMS user are shown but
- * can't be picked, so the same person isn't added twice.
+ * loading up front. Accounts that already belong to a workspace are shown
+ * but can't be picked (a user can be in only one workspace). An account that
+ * already has an eSMS user but no workspace yet *can* be picked, so it can be
+ * placed in one. Without `assignedUserIds`, any existing eSMS user is blocked.
  */
 export function AdUserPicker({
   value,
@@ -24,6 +26,7 @@ export function AdUserPicker({
   disabled,
   className,
   id,
+  assignedUserIds,
 }: {
   value: ApiAdUser | null;
   onValueChange: (user: ApiAdUser | null) => void;
@@ -31,6 +34,8 @@ export function AdUserPicker({
   disabled?: boolean;
   className?: string;
   id?: string;
+  /** eSMS user IDs that already hold a workspace membership. */
+  assignedUserIds?: ReadonlySet<string>;
 }) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
@@ -42,6 +47,7 @@ export function AdUserPicker({
   const [error, setError] = React.useState<string | null>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const loading = open && answeredQuery !== query;
+  const takenLabel = assignedUserIds ? "In a workspace" : "Added";
 
   function handleOpenChange(next: boolean) {
     setOpen(next);
@@ -121,14 +127,16 @@ export function AdUserPicker({
             </p>
           ) : (
             users.map((user) => {
-              const taken = user.existingUserId !== null;
+              const taken =
+                user.existingUserId !== null &&
+                (!assignedUserIds || assignedUserIds.has(user.existingUserId));
               const selected = value?.samAccountName === user.samAccountName;
               return (
                 <button
                   key={user.samAccountName}
                   type="button"
                   disabled={taken}
-                  title={taken ? "Already has an eSMS account" : undefined}
+                  title={taken ? takenLabel : undefined}
                   onClick={() => {
                     onValueChange(user);
                     handleOpenChange(false);
@@ -147,7 +155,7 @@ export function AdUserPicker({
                     </span>
                   </span>
                   {taken && (
-                    <span className="shrink-0 text-xs text-muted-foreground">Added</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{takenLabel}</span>
                   )}
                 </button>
               );

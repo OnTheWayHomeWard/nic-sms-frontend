@@ -306,14 +306,14 @@ const GUIDES: Record<string, PageGuide> = {
         body: "Every account on the platform, whatever workspace it belongs to — with its primary workspace, role, status, and last login.",
       },
       {
-        title: "Create a user",
-        body: "New User creates the account (username, display name, password, optional email) and can assign a workspace + role at once. A user with no workspace can sign in but sees nothing until assigned.",
+        title: "Add a user from Active Directory",
+        body: "Add User picks a staff account from Active Directory and can place it in a workspace with a role at once. Username, name, email and password all come from AD and can't be changed here. A user with no workspace can sign in but sees nothing until assigned.",
         selector: '[data-guide="allusers-new"]',
         optional: true,
       },
       {
         title: "One workspace per user",
-        body: "A user belongs to exactly one workspace. Edit details, reset passwords, and activate/deactivate from the row actions; role changes within a workspace are done on that workspace's User Management page.",
+        body: "A user belongs to exactly one workspace. Change a user's workspace and role, or activate/deactivate them, from the row actions. Passwords are managed in Active Directory, not here.",
       },
     ],
   },
@@ -331,7 +331,7 @@ const GUIDES: Record<string, PageGuide> = {
       },
       {
         title: "Add a member",
-        body: "New User creates the account and adds it to this workspace with the role you pick. A user can only be in one workspace.",
+        body: "Add Member picks a staff account from Active Directory and adds it to this workspace with the role you pick. A user can only be in one workspace; their name and password are managed in AD.",
         selector: '[data-guide="um-new"]',
         optional: true,
       },
@@ -547,17 +547,17 @@ const DIALOG_GUIDES: Record<string, PageGuide> = {
   },
 
   "allusers-user-form": {
-    title: "Create User",
+    title: "Add User from AD",
     steps: [
       {
         title: "Pick the person",
-        body: "Choose who this account is for from the directory — type to search by name. The username is generated for you from the workspace, division, and role.",
+        body: "Choose who to add from Active Directory — type to search by name. Their eSMS username is their AD login name.",
         selector: '[data-guide="au-user"]',
         optional: true,
       },
       {
         title: "Workspace & role (optional)",
-        body: "Assign a workspace and role now to grant access immediately, or leave them blank to create the account and place them later. A user belongs to just one workspace at a time.",
+        body: "Assign a workspace and role now to grant access immediately, or leave them blank to add the account and place them later. A user belongs to just one workspace at a time.",
         selector: '[data-guide="au-workspace-role"]',
         optional: true,
       },
@@ -569,13 +569,13 @@ const DIALOG_GUIDES: Record<string, PageGuide> = {
     steps: [
       {
         title: "Pick the person",
-        body: "Choose who to add to this workspace from the directory — type to search. The username is generated from the workspace and role.",
+        body: "Choose who to add to this workspace from Active Directory — type to search. Their eSMS username is their AD login name.",
         selector: '[data-guide="um-user"]',
         optional: true,
       },
       {
         title: "Role",
-        body: "The role sets what they can do here: Admin manages the workspace and approves, Operator creates and submits, Viewer is read-only, Delegate is the second-tier approver. Leave blank to add them without a role for now.",
+        body: "The role sets what they can do here: Admin manages the workspace and approves, Operator creates and submits, Viewer is read-only, Delegate is the second-tier approver.",
         selector: '[data-guide="um-role"]',
         optional: true,
       },
@@ -599,7 +599,7 @@ const DIALOG_GUIDES: Record<string, PageGuide> = {
       },
       {
         title: "Write the message",
-        body: "Compose the SMS body once a group is selected. The counter shows character count, SMS parts, and GSM-7/UCS-2 encoding.",
+        body: "Compose the SMS body once a group is selected. The counter shows characters, GSM-7/UCS-2 encoding, SMS parts and characters left. Amharic or emoji switch the message to UCS-2 (70 characters per SMS, 67 per part); € [ ] { } ^ ~ | \\ count as two.",
         selector: '[data-guide="tf-message"]',
         optional: true,
       },

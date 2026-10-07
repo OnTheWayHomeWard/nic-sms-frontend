@@ -9,8 +9,6 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Eye,
-  EyeOff,
   Plus,
   Power,
   PowerOff,
@@ -66,7 +64,6 @@ import {
   type ApiUser,
 } from "@/lib/services";
 import { AdUserPicker } from "@/components/ui/ad-user-picker";
-import { buildUsername } from "@/lib/username";
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
@@ -101,168 +98,98 @@ function formatLastLogin(iso: string | null): string {
   }
 }
 
-// ─── Create User Dialog ──────────────────────────────────────────────────────
+// ─── Add Member Dialog ───────────────────────────────────────────────────────
 
-interface CreateUserDialogProps {
+interface AddMemberDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   roleItems: { value: string; label: string }[];
+  /** eSMS users that already hold a workspace membership. */
+  assignedUserIds: ReadonlySet<string>;
   saving: boolean;
-  onSave: (data: {
-    username: string;
-    displayName: string;
-    /** sAMAccountName of the AD account picked for this user. */
-    adSam: string;
-    /** Blank for a domain account — AD holds the credential, not eSMS. */
-    password: string;
-    roleCode: string | null;
-  }) => void;
+  onSave: (data: { adUser: ApiAdUser; roleCode: string }) => void;
 }
 
-function CreateUserDialog({
+function AddMemberDialog({
   open,
   onOpenChange,
   roleItems,
+  assignedUserIds,
   saving,
   onSave,
-}: CreateUserDialogProps) {
-  const { user: currentUser } = useAuth();
+}: AddMemberDialogProps) {
   const [adUser, setAdUser] = React.useState<ApiAdUser | null>(null);
   const [roleCode, setRoleCode] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [showPassword, setShowPassword] = React.useState(false);
-
-  // Workspace/division are implicit here (this page is scoped to the
-  // signed-in admin's own workspace), so the username still follows the
-  // workspace-[division]-role-name format without asking the admin to pick them.
-  const roleLabel = roleItems.find((r) => r.value === roleCode)?.label ?? "";
-  const username = React.useMemo(
-    () =>
-      adUser
-        ? buildUsername(
-            currentUser?.workspaceName ?? "",
-            roleLabel,
-            adUser.displayName,
-            currentUser?.division ?? "",
-          )
-        : "",
-    [adUser, roleLabel, currentUser?.workspaceName, currentUser?.division],
-  );
 
   React.useEffect(() => {
     if (open) {
       setAdUser(null);
       setRoleCode("");
-      setPassword("");
-      setShowPassword(false);
     }
   }, [open]);
 
   function handleSave() {
-    // Password is deliberately not required: this user signs in against Active
-    // Directory, which owns their credential.
-    if (!adUser) {
-      toast.error("Please provide a user from AD.", {
-        icon: <XCircle className="size-4" strokeWidth={2.5} />,
-        duration: 6000,
-      });
+    if (!adUser || !roleCode) {
+      toast.error(
+        !adUser ? "Please pick a user from Active Directory." : "Please pick a role.",
+        { icon: <XCircle className="size-4" strokeWidth={2.5} />, duration: 6000 },
+      );
       return;
     }
-    onSave({
-      username,
-      displayName: adUser.displayName,
-      adSam: adUser.samAccountName,
-      password,
-      roleCode: roleCode || null,
-    });
+    onSave({ adUser, roleCode });
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader guideId="um-user-form">
-          <DialogTitle>Create New User</DialogTitle>
+          <DialogTitle>Add Member from Active Directory</DialogTitle>
           <DialogDescription>
-            Username format: workspace-[division]-role-name
+            Username, name, email and password come from AD.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
-          <div className="space-y-1.5">
-            <Label>
-              Username <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              readOnly
-              value={username}
-              placeholder="underwriting-royal-admin-Girma"
-              className="font-mono bg-muted/50 text-muted-foreground"
-            />
-          </div>
-
           <div className="space-y-1.5" data-guide="um-user">
             <Label>
               Select User <span className="text-destructive">*</span>
             </Label>
-            <AdUserPicker value={adUser} onValueChange={setAdUser} />
+            <AdUserPicker
+              value={adUser}
+              onValueChange={setAdUser}
+              assignedUserIds={assignedUserIds}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Username</Label>
+            <Input
+              readOnly
+              value={adUser?.samAccountName ?? ""}
+              placeholder="AD login name"
+              className="font-mono bg-muted/50 text-muted-foreground"
+            />
           </div>
 
           <div className="space-y-1.5" data-guide="um-role">
-            <Label>Role</Label>
+            <Label>
+              Role <span className="text-destructive">*</span>
+            </Label>
             <SearchableSelect
               items={roleItems}
               value={roleCode}
               onValueChange={setRoleCode}
-              placeholder="Select role (optional)"
+              placeholder="Select role"
               searchPlaceholder="Search roles…"
               emptyText="No roles found."
             />
-            <p className="text-xs text-muted-foreground">
-              Role is optional — assign it now to grant access, or leave it
-              blank and add a role later.
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>
-              Password{" "}
-              <span className="text-muted-foreground font-normal">
-                (optional)
-              </span>
-            </Label>
-            <div className="relative">
-              <Input
-                type={showPassword ? "text" : "password"}
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="pr-9"
-              />
-              <button
-                type="button"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                onClick={() => setShowPassword((v) => !v)}
-                tabIndex={-1}
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? (
-                  <EyeOff className="size-4" />
-                ) : (
-                  <Eye className="size-4" />
-                )}
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Leave blank: this user signs in with their Active Directory
-              password. Set one only for an account AD does not hold.
-            </p>
           </div>
         </div>
 
         <DialogFooter>
           <Button onClick={handleSave} disabled={saving}>
             <Plus />
-            {saving ? "Creating..." : "Create User"}
+            {saving ? "Adding..." : "Add Member"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -278,7 +205,7 @@ interface EditUserDialogProps {
   row: Row | null;
   roleItems: { value: string; label: string }[];
   saving: boolean;
-  onSave: (data: { roleCode: string; password: string }) => void;
+  onSave: (data: { roleCode: string }) => void;
 }
 
 function EditUserDialog({
@@ -290,12 +217,10 @@ function EditUserDialog({
   onSave,
 }: EditUserDialogProps) {
   const [roleCode, setRoleCode] = React.useState("");
-  const [password, setPassword] = React.useState("");
 
   React.useEffect(() => {
     if (open && row) {
       setRoleCode(row.role);
-      setPassword("");
     }
   }, [open, row]);
 
@@ -327,29 +252,14 @@ function EditUserDialog({
               emptyText="No roles found."
             />
             <p className="text-xs text-muted-foreground">
-              A user&apos;s permissions are determined by their role.
-            </p>
-          </div>
-
-          <Separator />
-
-          <div className="space-y-1.5">
-            <Label>Password</Label>
-            <Input
-              type="password"
-              placeholder="Leave blank to keep current password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Only affects accounts Active Directory does not hold. A domain
-              user&apos;s password lives in AD and cannot be changed from here.
+              A user&apos;s permissions are determined by their role. Name and
+              password are managed in Active Directory.
             </p>
           </div>
         </div>
 
         <DialogFooter>
-          <Button onClick={() => onSave({ roleCode, password })} disabled={saving}>
+          <Button onClick={() => onSave({ roleCode })} disabled={saving}>
             {saving ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>
@@ -397,6 +307,11 @@ export default function UserManagementPage() {
   const delegationEnabled = workspacePermissions.includes("DELEGATION");
 
   const [rows, setRows] = React.useState<Row[]>([]);
+  // Every user that holds a membership anywhere — a user can be in only one
+  // workspace, so the AD picker blocks them.
+  const [assignedUserIds, setAssignedUserIds] = React.useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [roles, setRoles] = React.useState<ApiRole[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -409,7 +324,7 @@ export default function UserManagementPage() {
   const [currentPage, setCurrentPage] = React.useState(1);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
   const [pageKey, setPageKey] = React.useState(0);
-  const [createOpen, setCreateOpen] = React.useState(false);
+  const [addOpen, setAddOpen] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<Row | null>(null);
   const [statusTarget, setStatusTarget] = React.useState<Row | null>(null);
 
@@ -447,6 +362,9 @@ export default function UserManagementPage() {
           if (membership) next.push({ user: u, role: membership.role });
         });
         setRows(next);
+        setAssignedUserIds(
+          new Set(users.filter((u) => u.memberships.length > 0).map((u) => u.id)),
+        );
       })
       .catch((err) => {
         toast.error(apiErrorMessage(err, "Failed to load users."), {
@@ -534,41 +452,23 @@ export default function UserManagementPage() {
     setPageKey((k) => k + 1);
   }
 
-  async function handleCreate(data: {
-    username: string;
-    displayName: string;
-    adSam: string;
-    password: string;
-    roleCode: string | null;
-  }) {
+  async function handleAdd(data: { adUser: ApiAdUser; roleCode: string }) {
+    if (!workspaceId) return;
+    const roleId = roleIdByCode[data.roleCode];
+    if (!roleId) return;
     setSaving(true);
     try {
-      // 1) Create the global user account.
-      const created = await usersApi.create({
-        username: data.username,
-        displayName: data.displayName,
-        adSam: data.adSam,
-        // Omitted entirely when blank, so the account is created with no local
-        // password hash at all rather than one derived from an empty string.
-        ...(data.password.trim() ? { password: data.password } : {}),
+      // 1) Add the AD account to eSMS (returns the existing user if it already
+      //    has one), 2) place it in this workspace with the chosen role.
+      const user = await usersApi.addFromAd({ adSam: data.adUser.samAccountName });
+      await workspacesApi.addMember(workspaceId, user.id, roleId);
+      setAddOpen(false);
+      toast.success(`${user.displayName || user.username} added to the workspace.`, {
+        icon: <CheckCircle2 className="size-4" strokeWidth={2.5} />,
       });
-      // 2) Optionally add to the current workspace if a role was selected.
-      if (data.roleCode && workspaceId) {
-        const roleId = roleIdByCode[data.roleCode];
-        if (roleId) {
-          await workspacesApi.addMember(workspaceId, created.id, roleId);
-        }
-      }
-      setCreateOpen(false);
-      toast.success(
-        data.roleCode && workspaceId
-          ? "User created and added to workspace."
-          : "User created.",
-        { icon: <CheckCircle2 className="size-4" strokeWidth={2.5} /> },
-      );
       loadUsers();
     } catch (err) {
-      toast.error(apiErrorMessage(err, "Failed to create user."), {
+      toast.error(apiErrorMessage(err, "Failed to add member."), {
         icon: <XCircle className="size-4" strokeWidth={2.5} />,
         duration: 7000,
       });
@@ -577,15 +477,12 @@ export default function UserManagementPage() {
     }
   }
 
-  async function handleEdit(data: { roleCode: string; password: string }) {
+  async function handleEdit(data: { roleCode: string }) {
     if (!editTarget || !workspaceId) return;
     const roleId = roleIdByCode[data.roleCode];
     const name = editTarget.user.displayName || editTarget.user.username;
     setSaving(true);
     try {
-      if (data.password.trim()) {
-        await usersApi.update(editTarget.user.id, { password: data.password });
-      }
       if (data.roleCode !== editTarget.role && roleId) {
         await workspacesApi.changeMemberRole(workspaceId, editTarget.user.id, roleId);
       }
@@ -728,9 +625,9 @@ export default function UserManagementPage() {
               </SelectContent>
             </Select>
 
-            <Button className="ml-auto" onClick={() => setCreateOpen(true)} data-guide="um-new">
+            <Button className="ml-auto" onClick={() => setAddOpen(true)} data-guide="um-new">
               <Plus className="size-4" />
-              New User
+              Add Member
             </Button>
           </div>
 
@@ -799,6 +696,11 @@ export default function UserManagementPage() {
                           {formatLastLogin(user.lastLoginAt)}
                         </TableCell>
                         <TableCell className="pr-4">
+                          {/* Your own account and a SUPER_ADMIN are not
+                              managed from here (the backend refuses both). */}
+                          {role === "SUPER_ADMIN" || user.id === currentUser?.id ? (
+                            <div className="text-right text-xs text-muted-foreground">—</div>
+                          ) : (
                           <div className="flex items-center justify-end gap-0.5">
                             <Button variant="ghost" size="icon-sm" onClick={() => setEditTarget({ user, role })}>
                               <SquarePen className="size-4" />
@@ -823,6 +725,7 @@ export default function UserManagementPage() {
                               </Button>
                             )}
                           </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -842,12 +745,13 @@ export default function UserManagementPage() {
         </>
       )}
 
-      <CreateUserDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
+      <AddMemberDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
         roleItems={roleItems}
+        assignedUserIds={assignedUserIds}
         saving={saving}
-        onSave={handleCreate}
+        onSave={handleAdd}
       />
 
       <EditUserDialog

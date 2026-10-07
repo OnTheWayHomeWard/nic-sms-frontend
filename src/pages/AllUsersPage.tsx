@@ -8,8 +8,6 @@ import {
   ChevronsRight,
   ChevronLeft,
   ChevronRight,
-  Eye,
-  EyeOff,
   Info,
   Plus,
   RotateCcw,
@@ -65,7 +63,7 @@ import {
   type UiRoleLabel,
 } from "@/lib/services";
 import { AdUserPicker } from "@/components/ui/ad-user-picker";
-import { buildUsername } from "@/lib/username";
+import { useAuth } from "@/contexts/AuthContext";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -95,6 +93,8 @@ interface User {
   status: UserStatus;
   lastLogin: string;
   privileges: string[];
+  /** Holds the platform SUPER_ADMIN role — not editable from this page. */
+  isSuperAdmin: boolean;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -122,49 +122,47 @@ function fromApi(u: ApiUser): User {
     status: u.status === "ACTIVE" ? "Active" : "Inactive",
     lastLogin: formatLastLogin(u.lastLoginAt),
     privileges: [], // no per-user privilege endpoint on the backend yet
+    isSuperAdmin: u.memberships.some((m) => m.role === "SUPER_ADMIN"),
   };
 }
 
-// ─── Temporary-integration banner ─────────────────────────────────────────────
+// ─── Active Directory banner ──────────────────────────────────────────────────
 
-function TemporaryNotice() {
+function DirectoryNotice() {
   return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700/50 px-3.5 py-2.5 text-sm text-amber-800 dark:text-amber-300">
+    <div className="flex items-start gap-2.5 rounded-lg border border-sky-300/60 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-700/50 px-3.5 py-2.5 text-sm text-sky-800 dark:text-sky-300">
       <Info className="size-4 mt-0.5 shrink-0" />
       <p>
-        <span className="font-medium">Temporary integration:</span> users are
-        local backend accounts until Active Directory integration lands. The AD
-        user list is mocked and per-user privileges are UI-only; role, workspace
-        and status are persisted via the user&apos;s workspace membership.
+        Accounts come from <span className="font-medium">Active Directory</span>.
+        Username, name, email and password are managed in AD and can&apos;t be
+        changed here — this page adds AD accounts to eSMS, places them in a
+        workspace with a role, and activates or deactivates them.
       </p>
     </div>
   );
 }
 
-// ─── Create User Dialog ───────────────────────────────────────────────────────
+// ─── Add User Dialog ──────────────────────────────────────────────────────────
 
-interface CreateUserDialogProps {
+interface AddUserDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   workspaces: ApiWorkspace[];
-  onSave: (
-    user: Omit<User, "id" | "lastLogin" | "privileges">,
-    password: string,
-    adSam: string,
-  ) => Promise<void>;
+  /** eSMS users that already hold a workspace membership. */
+  assignedUserIds: ReadonlySet<string>;
+  onSave: (adUser: ApiAdUser, role: UserRole | "", workspaceId: string | null) => Promise<void>;
 }
 
-function CreateUserDialog({
+function AddUserDialog({
   open,
   onOpenChange,
   workspaces,
+  assignedUserIds,
   onSave,
-}: CreateUserDialogProps) {
+}: AddUserDialogProps) {
   const [adUser, setAdUser] = React.useState<ApiAdUser | null>(null);
   const [workspaceId, setWorkspaceId] = React.useState("");
   const [role, setRole] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [showPassword, setShowPassword] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
 
   // Suspended workspaces can't take new members, so they're excluded here —
@@ -175,28 +173,18 @@ function CreateUserDialog({
   const assignableWorkspaces = workspaces.filter(
     (w) => w.status === "ACTIVE" && !w.isBranchParent,
   );
-  const selectedWs = assignableWorkspaces.find((w) => w.id === workspaceId);
-
-  const username = React.useMemo(
-    () => (adUser ? buildUsername(selectedWs?.name ?? "", role, adUser.displayName, "") : ""),
-    [adUser, selectedWs, role],
-  );
 
   React.useEffect(() => {
     if (open) {
       setAdUser(null);
       setWorkspaceId("");
       setRole("");
-      setPassword("");
-      setShowPassword(false);
     }
   }, [open]);
 
   async function handleSave() {
-    // Password is deliberately not required: this user signs in against Active
-    // Directory, which owns their credential.
     if (!adUser) {
-      toast.error("Please provide a user from AD.", {
+      toast.error("Please pick a user from Active Directory.", {
         icon: <XCircle className="size-4" strokeWidth={2.5} />,
         duration: 6000,
       });
@@ -204,19 +192,7 @@ function CreateUserDialog({
     }
     setSaving(true);
     try {
-      await onSave(
-        {
-          username,
-          fullName: adUser.displayName,
-          role: role as UserRole,
-          workspace: selectedWs?.name ?? "",
-          workspaceId: workspaceId || null,
-          division: "",
-          status: "Active",
-        },
-        password,
-        adUser.samAccountName,
-      );
+      await onSave(adUser, role as UserRole | "", workspaceId || null);
     } finally {
       setSaving(false);
     }
@@ -226,30 +202,32 @@ function CreateUserDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader guideId="allusers-user-form">
-          <DialogTitle>Create New User</DialogTitle>
+          <DialogTitle>Add User from Active Directory</DialogTitle>
           <DialogDescription>
-            Username format: workspace-role-name
+            Username, name, email and password come from AD.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
-          <div className="space-y-1.5">
-            <Label>
-              Username <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              readOnly
-              value={username}
-              placeholder="underwriting-admin-Girma"
-              className="font-mono bg-muted/50 text-muted-foreground"
-            />
-          </div>
-
           <div className="space-y-1.5" data-guide="au-user">
             <Label>
               Select User <span className="text-destructive">*</span>
             </Label>
-            <AdUserPicker value={adUser} onValueChange={setAdUser} />
+            <AdUserPicker
+              value={adUser}
+              onValueChange={setAdUser}
+              assignedUserIds={assignedUserIds}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Username</Label>
+            <Input
+              readOnly
+              value={adUser?.samAccountName ?? ""}
+              placeholder="AD login name"
+              className="font-mono bg-muted/50 text-muted-foreground"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4" data-guide="au-workspace-role">
@@ -285,47 +263,12 @@ function CreateUserDialog({
             leave blank and add the user to a workspace later. Picking a branch
             assigns them to that branch specifically.
           </p>
-
-          <div className="space-y-1.5">
-            <Label>
-              Password{" "}
-              <span className="text-muted-foreground font-normal">
-                (optional)
-              </span>
-            </Label>
-            <div className="relative">
-              <Input
-                type={showPassword ? "text" : "password"}
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="pr-9"
-              />
-              <button
-                type="button"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                onClick={() => setShowPassword((v) => !v)}
-                tabIndex={-1}
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? (
-                  <EyeOff className="size-4" />
-                ) : (
-                  <Eye className="size-4" />
-                )}
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Leave blank: this user signs in with their Active Directory
-              password. Set one only for an account AD does not hold.
-            </p>
-          </div>
         </div>
 
         <DialogFooter>
           <Button onClick={handleSave} disabled={saving}>
             <Plus />
-            {saving ? "Creating..." : "Create User"}
+            {saving ? "Adding..." : "Add User"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -342,7 +285,6 @@ interface EditUserDialogProps {
   workspaces: ApiWorkspace[];
   onSave: (
     updates: Pick<User, "workspace" | "workspaceId" | "role" | "division">,
-    newPassword: string,
   ) => Promise<void>;
 }
 
@@ -355,7 +297,6 @@ function EditUserDialog({
 }: EditUserDialogProps) {
   const [workspaceId, setWorkspaceId] = React.useState(user?.workspaceId ?? "");
   const [role, setRole] = React.useState<UserRole | "">(user?.role ?? "");
-  const [password, setPassword] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
   // Suspended workspaces aren't offered for (re-)assignment, but if the user's
@@ -376,17 +317,18 @@ function EditUserDialog({
     if (open && user) {
       setWorkspaceId(user.workspaceId ?? "");
       setRole(user.role);
-      setPassword("");
     }
   }, [open, user]);
 
   async function handleSave() {
     setSaving(true);
     try {
-      await onSave(
-        { workspace: selectedWs?.name ?? "", workspaceId: workspaceId || null, role, division: "" },
-        password,
-      );
+      await onSave({
+        workspace: selectedWs?.name ?? "",
+        workspaceId: workspaceId || null,
+        role,
+        division: "",
+      });
     } finally {
       setSaving(false);
     }
@@ -447,27 +389,11 @@ function EditUserDialog({
           )}
 
           <TempFieldHint>
-            Role and workspace are optional and saved as a workspace membership.
-            Assigning both grants the user access; leaving them blank keeps the
-            account with no workspace. Picking a branch assigns them to that
-            branch specifically.
+            Role and workspace are saved as a workspace membership. Assigning
+            both grants the user access; clearing both removes them from their
+            workspace. Picking a branch assigns them to that branch
+            specifically. Name and password are managed in Active Directory.
           </TempFieldHint>
-
-          <Separator />
-
-          <div className="space-y-1.5">
-            <Label>Password</Label>
-            <Input
-              type="password"
-              placeholder="Leave blank to keep current password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Only affects accounts Active Directory does not hold. A domain
-              user&apos;s password lives in AD and cannot be changed from here.
-            </p>
-          </div>
         </div>
 
         <DialogFooter>
@@ -517,6 +443,7 @@ function SortableHead({
 // ─── All Users Page ────────────────────────────────────────────────────────────
 
 export default function AllUsersPage() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = React.useState<User[]>([]);
   const [loading, setLoading] = React.useState(true);
   // Full workspace + role catalogues, used to resolve names/labels to the IDs
@@ -532,7 +459,7 @@ export default function AllUsersPage() {
   const [sortDir, setSortDir] = React.useState<SortDir>("asc");
   const [pageKey, setPageKey] = React.useState(0);
 
-  const [createOpen, setCreateOpen] = React.useState(false);
+  const [addOpen, setAddOpen] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<User | null>(null);
   const [editKey, setEditKey] = React.useState(0);
   const [deactivateTarget, setDeactivateTarget] = React.useState<User | null>(
@@ -606,6 +533,13 @@ export default function AllUsersPage() {
     return { ok: true, workspaceId: ws.id, roleId: role.id, roleCode };
   }
 
+  // Users already in a workspace can't be added to another one (one workspace
+  // per user), so the AD picker blocks them; everyone else can be picked.
+  const assignedUserIds = React.useMemo(
+    () => new Set(users.filter((u) => u.workspaceId).map((u) => u.id)),
+    [users],
+  );
+
   const filtered = React.useMemo(() => {
     let result = users.filter((u) => {
       const q = search.toLowerCase();
@@ -657,50 +591,50 @@ export default function AllUsersPage() {
     setPageKey((k) => k + 1);
   }
 
-  async function handleCreate(
-    data: Omit<User, "id" | "lastLogin" | "privileges">,
-    password: string,
-    adSam: string,
+  async function handleAdd(
+    adUser: ApiAdUser,
+    role: UserRole | "",
+    workspaceId: string | null,
   ) {
     try {
-      const created = await usersApi.create({
-        username: data.username,
-        displayName: data.fullName,
-        adSam,
-        // Omitted entirely when blank, so the account is created with no local
-        // password hash at all rather than one derived from an empty string.
-        ...(password.trim() ? { password } : {}),
-      });
+      // Returns the existing eSMS user when this AD account already has one.
+      const added = await usersApi.addFromAd({ adSam: adUser.samAccountName });
+      const alreadyInEsms = users.some((u) => u.id === added.id);
 
       // Assign the workspace membership that carries role + workspace
       let note = "";
-      const resolved = resolveMembership(data.role, data.workspaceId);
+      const resolved = resolveMembership(role, workspaceId);
       if (resolved?.ok) {
         try {
-          await workspacesApi.addMember(
-            resolved.workspaceId,
-            created.id,
-            resolved.roleId,
-          );
+          await workspacesApi.addMember(resolved.workspaceId, added.id, resolved.roleId);
         } catch (e) {
-          note = ` Account created, but role assignment failed: ${apiErrorMessage(e, "membership error")}`;
+          note = ` Account added, but workspace assignment failed: ${apiErrorMessage(e, "membership error")}`;
         }
       } else if (resolved?.reason === "unmapped-role") {
-        note = ` "${data.role}" has no backend role yet, so no workspace role was assigned.`;
+        note = ` "${role}" has no backend role yet, so no workspace role was assigned.`;
       } else if (resolved?.reason === "unknown-workspace") {
-        note = ` Account created; "${data.workspace}" isn't a backend workspace yet, so no role was assigned.`;
+        note = " Pick both a workspace and a role to grant access — no workspace was assigned.";
       }
 
       // Re-fetch so the row reflects the membership-derived role/workspace
-      const full = await usersApi.get(created.id).catch(() => created);
-      setUsers((prev) => [fromApi(full), ...prev]);
-      setCreateOpen(false);
-      toast.success("User created successfully." + note, {
+      const full = fromApi(await usersApi.get(added.id).catch(() => added));
+      setUsers((prev) =>
+        alreadyInEsms
+          ? prev.map((u) => (u.id === full.id ? full : u))
+          : [full, ...prev],
+      );
+      setAddOpen(false);
+      const base = alreadyInEsms
+        ? resolved?.ok && !note
+          ? `${full.fullName} added to the workspace.`
+          : `${full.fullName} is already in eSMS.`
+        : "User added from Active Directory.";
+      toast.success(base + note, {
         icon: <CheckCircle2 className="size-4" strokeWidth={2.5} />,
         ...(note ? { duration: 8000 } : {}),
       });
     } catch (err) {
-      toast.error(apiErrorMessage(err, "Failed to create user."), {
+      toast.error(apiErrorMessage(err, "Failed to add user."), {
         icon: <XCircle className="size-4" strokeWidth={2.5} />,
         duration: 7000,
       });
@@ -709,63 +643,48 @@ export default function AllUsersPage() {
 
   async function handleEdit(
     updates: Pick<User, "workspace" | "workspaceId" | "role" | "division">,
-    newPassword: string,
   ) {
     if (!editTarget) return;
     const targetId = editTarget.id;
     try {
-      // Password reset persists on the user profile directly.
-      if (newPassword.trim()) {
-        await usersApi.update(targetId, { password: newPassword });
-      }
-
-      // Role/workspace persist as a membership. The grid shows the user's
-      // FIRST membership (backend derives primaryRole/primaryWorkspace from
-      // memberships.get(0)), so a plain addMember would add a *second*
-      // membership and the row would look unchanged. We therefore MOVE the
-      // user: ensure the target-workspace membership with the right role, then
-      // remove any memberships in other workspaces.
+      // Role/workspace persist as a membership, and a user holds at most one
+      // (the backend refuses to add a second). So a change of workspace is a
+      // MOVE: drop the old membership first, then add the new one. A role
+      // change within the same workspace is done in place.
       let note = "";
+      const current = await usersApi.get(targetId);
       const resolved = resolveMembership(updates.role, updates.workspaceId);
       if (resolved?.ok) {
         try {
-          const current = await usersApi.get(targetId);
           const existing = current.memberships.find(
             (m) => m.workspaceId === resolved.workspaceId,
           );
-          if (existing && existing.role !== resolved.roleCode) {
-            await workspacesApi.changeMemberRole(
-              resolved.workspaceId,
-              targetId,
-              resolved.roleId,
-            );
-          } else if (!existing) {
-            await workspacesApi.addMember(
-              resolved.workspaceId,
-              targetId,
-              resolved.roleId,
-            );
-          }
-
-          // Remove stale memberships in OTHER workspaces so the user "moves"
-          // rather than accumulating memberships (the grid reads the first one).
-          const stale = current.memberships.filter(
-            (m) => m.workspaceId !== resolved.workspaceId,
-          );
-          for (const m of stale) {
-            try {
+          for (const m of current.memberships) {
+            if (m.workspaceId !== resolved.workspaceId) {
               await workspacesApi.removeMember(m.workspaceId, targetId);
-            } catch {
-              note = ` Profile saved and new membership set, but the old membership in "${m.workspaceName}" could not be removed.`;
             }
           }
+          if (existing && existing.role !== resolved.roleCode) {
+            await workspacesApi.changeMemberRole(resolved.workspaceId, targetId, resolved.roleId);
+          } else if (!existing) {
+            await workspacesApi.addMember(resolved.workspaceId, targetId, resolved.roleId);
+          }
         } catch (e) {
-          note = ` Profile saved, but role change failed: ${apiErrorMessage(e, "membership error")}`;
+          note = ` Workspace/role change failed: ${apiErrorMessage(e, "membership error")}`;
+        }
+      } else if (!updates.role && !updates.workspaceId) {
+        // Both cleared: take the user out of their workspace.
+        try {
+          for (const m of current.memberships) {
+            await workspacesApi.removeMember(m.workspaceId, targetId);
+          }
+        } catch (e) {
+          note = ` Could not remove the workspace membership: ${apiErrorMessage(e, "membership error")}`;
         }
       } else if (resolved?.reason === "unmapped-role") {
         note = ` "${updates.role}" has no backend role yet, so the role wasn't changed.`;
-      } else if (resolved?.reason === "unknown-workspace") {
-        note = ` Profile saved; "${updates.workspace}" isn't a backend workspace, so the role/workspace wasn't changed.`;
+      } else {
+        note = " Pick both a workspace and a role — nothing was changed.";
       }
 
       // Re-fetch so the row reflects the server's membership state
@@ -775,10 +694,16 @@ export default function AllUsersPage() {
           u.id === targetId ? { ...fromApi(full), privileges: u.privileges } : u,
         ),
       );
+      if (note) {
+        toast.error(note.trim(), {
+          icon: <XCircle className="size-4" strokeWidth={2.5} />,
+          duration: 8000,
+        });
+        return;
+      }
       setEditTarget(null);
-      toast.success("User updated successfully." + note, {
+      toast.success("User updated successfully.", {
         icon: <CheckCircle2 className="size-4" strokeWidth={2.5} />,
-        ...(note ? { duration: 8000 } : {}),
       });
     } catch (err) {
       toast.error(apiErrorMessage(err, "Failed to update user."), {
@@ -907,13 +832,12 @@ export default function AllUsersPage() {
       <div className="space-y-1">
         <TypographyH3>All Users Management</TypographyH3>
         <TypographyMuted>
-          Convention: workspace-[division]-role-name &nbsp;&nbsp; e.g.
-          underwriting-main-admin-James
+          Usernames are Active Directory login names.
         </TypographyMuted>
       </div>
       <Separator />
 
-      <TemporaryNotice />
+      <DirectoryNotice />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
@@ -961,9 +885,9 @@ export default function AllUsersPage() {
           </SelectContent>
         </Select>
 
-        <Button className="ml-auto" onClick={() => setCreateOpen(true)} data-guide="allusers-new">
+        <Button className="ml-auto" onClick={() => setAddOpen(true)} data-guide="allusers-new">
           <Plus />
-          New User
+          Add User
         </Button>
       </div>
 
@@ -1031,6 +955,12 @@ export default function AllUsersPage() {
                     {user.lastLogin}
                   </TableCell>
                   <TableCell className="pr-4">
+                    {/* The superadmin and your own account aren't managed here:
+                        the backend refuses self-deactivation, and moving a
+                        SUPER_ADMIN's membership would strip their role. */}
+                    {user.isSuperAdmin || user.id === currentUser?.id ? (
+                      <div className="text-right text-xs text-muted-foreground">—</div>
+                    ) : (
                     <div className="flex items-center justify-end gap-0.5">
                       <Button
                         variant="ghost"
@@ -1062,6 +992,7 @@ export default function AllUsersPage() {
                         </Button>
                       )}
                     </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -1079,12 +1010,13 @@ export default function AllUsersPage() {
         </TableBody>
       </Table>
 
-      {/* Create Dialog */}
-      <CreateUserDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
+      {/* Add-from-AD Dialog */}
+      <AddUserDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
         workspaces={workspaces}
-        onSave={handleCreate}
+        assignedUserIds={assignedUserIds}
+        onSave={handleAdd}
       />
 
       {/* Edit Dialog */}

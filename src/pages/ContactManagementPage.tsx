@@ -262,12 +262,27 @@ function GroupRecipientsDialog({
 
 // ─── Header parsing helper ────────────────────────────────────────────────
 
+/**
+ * CSVs are decoded as UTF-8 text first: handing SheetJS the raw bytes makes
+ * it read them as Latin-1, garbling Amharic header names in the column
+ * picker. (Excel files still go through the binary path.)
+ */
+function readAsWorkbook(buf: ArrayBuffer, fileName: string): XLSX.WorkBook {
+  if (/\.(csv|txt)$/i.test(fileName)) {
+    const text = new TextDecoder("utf-8").decode(buf).replace(/^\uFEFF/, "");
+    if (!text.includes("\uFFFD")) {
+      return XLSX.read(text, { type: "string", raw: true });
+    }
+  }
+  return XLSX.read(buf, { type: "array" });
+}
+
 function parseFileHeadersClient(file: File): Promise<string[]> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const wb = XLSX.read(e.target?.result, { type: "array" });
+        const wb = readAsWorkbook(e.target?.result as ArrayBuffer, file.name);
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1 });
         if (rows.length > 0) {

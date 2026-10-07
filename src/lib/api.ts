@@ -1,6 +1,9 @@
 import axios from "axios";
 
 const TOKEN_KEY = "nic_access_token";
+// When this browser received the current token (ms, local clock). See
+// tokenExpiryMs for why the token's exp alone isn't trusted.
+const RECEIVED_AT_KEY = "nic_access_token_received_at";
 
 // Deploy-time override (VITE_API_BASE_URL in .env.production). Defaults to
 // "/api": in dev the Vite proxy strips the prefix and forwards to :8080; in
@@ -19,6 +22,11 @@ const EXPIRY_SKEW_MS = 10_000;
 // platform is only reachable from the NIC LAN.
 const UNAUTHENTICATED_PATHS = ["/auth/login", "/auth/refresh"];
 
+// Sent with the access token (so the backend can deny-list it) but never
+// refreshed or retried: signing out must not first extend the session, and the
+// backend accepts it with an expired token (it works off the refresh cookie).
+const NO_REFRESH_PATHS = ["/auth/logout"];
+
 export const api = axios.create({
   baseURL: API_BASE,
   withCredentials: true,
@@ -30,15 +38,43 @@ function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
 }
 
+/** Store a freshly issued access token, stamped with when it arrived. */
+export function storeAccessToken(token: string): void {
+  sessionStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(RECEIVED_AT_KEY, String(Date.now()));
+}
+
+export function clearStoredAccessToken(): void {
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(RECEIVED_AT_KEY);
+}
+
+// The token's exp is stamped by the server's clock; comparing it to this
+// machine's Date.now() is off by however far the two clocks disagree. With the
+// client a minute or more behind, the "Session expiring" dialog would only
+// appear after the server had already expired the session — so "Stay signed
+// in" could never succeed. Instead the expiry is measured on the local clock:
+// arrival time + the token's lifetime (exp - iat).
 function tokenExpiryMs(token: string): number | null {
   try {
     const payload = JSON.parse(
       atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
     );
-    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+    if (typeof payload.exp !== "number") return null;
+    const receivedAt = Number(sessionStorage.getItem(RECEIVED_AT_KEY));
+    if (typeof payload.iat === "number" && receivedAt > 0) {
+      return receivedAt + (payload.exp - payload.iat) * 1000;
+    }
+    return payload.exp * 1000;
   } catch {
     return null;
   }
+}
+
+/** Local-clock expiry (ms) of the stored access token, or null if none. */
+export function getAccessTokenExpiryMs(): number | null {
+  const token = getToken();
+  return token ? tokenExpiryMs(token) : null;
 }
 
 function isExpiredSoon(token: string): boolean {
@@ -54,11 +90,17 @@ function isUnauthenticatedPath(url: string | undefined): boolean {
   );
 }
 
+function isNoRefreshPath(url: string | undefined): boolean {
+  return (
+    typeof url === "string" && NO_REFRESH_PATHS.some((p) => url.startsWith(p))
+  );
+}
+
 // ── Refresh (deduped via a shared in-flight promise) ──────────────────────────
-// The backend's access token has a short (5 min) TTL, and an *expired* token is
-// rejected as 403 (anonymous → access denied), not 401 — so we refresh
-// proactively rather than waiting for a 401. The shared promise collapses
-// concurrent refreshes into one /auth/refresh call.
+// The backend's access token has a short (5 min) TTL, so we refresh
+// proactively rather than waiting for the 401 an expired token gets. The
+// shared promise collapses concurrent refreshes (interceptor, "Stay signed
+// in") into one /auth/refresh call.
 
 let refreshPromise: Promise<string> | null = null;
 
@@ -68,12 +110,12 @@ function refreshAccessToken(): Promise<string> {
       .post<{ accessToken: string }>(REFRESH_URL, {}, { withCredentials: true })
       .then((res) => {
         const token = res.data.accessToken;
-        sessionStorage.setItem(TOKEN_KEY, token);
+        storeAccessToken(token);
         api.defaults.headers.common.Authorization = `Bearer ${token}`;
         return token;
       })
       .catch((err) => {
-        sessionStorage.removeItem(TOKEN_KEY);
+        clearStoredAccessToken();
         clearAuthHeader();
         window.dispatchEvent(new Event("auth:logout"));
         throw err;
@@ -93,7 +135,7 @@ api.interceptors.request.use(async (config) => {
   }
 
   let token = getToken();
-  if (token && isExpiredSoon(token)) {
+  if (token && !isNoRefreshPath(config.url) && isExpiredSoon(token)) {
     try {
       token = await refreshAccessToken();
     } catch {
@@ -125,7 +167,7 @@ api.interceptors.response.use(
 
     // The login endpoint returns 401 for a bad username/password — surface
     // that, never refresh on it.
-    if (isUnauthenticatedPath(original?.url)) {
+    if (isUnauthenticatedPath(original?.url) || isNoRefreshPath(original?.url)) {
       return Promise.reject(error);
     }
 
